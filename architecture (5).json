@@ -1,0 +1,234 @@
+{
+  "project_name": "BiteSpeed Food Delivery Engine",
+  "description": "A high-throughput, low-latency hyper-local food delivery platform architecture supporting real-time order matching, geospatial driver tracking, dynamic pricing, and multi-tenant restaurant catalog management.",
+  "microservices": [
+    {
+      "name": "API Gateway Service",
+      "responsibility": "Handles entry point request routing, SSL termination, rate limiting, JWT validation, and client API versioning.",
+      "language": "Go",
+      "framework": "Gin",
+      "api_gateway": true
+    },
+    {
+      "name": "Identity & Auth Service",
+      "responsibility": "Manages user profiles, role-based access control (Customers, Drivers, Restaurant Admins), OAuth2/OIDC, and session management.",
+      "language": "Node.js",
+      "framework": "NestJS",
+      "api_gateway": false
+    },
+    {
+      "name": "Restaurant & Menu Service",
+      "responsibility": "Manages restaurant onboarding, menu items, dynamic inventory availability, operating hours, and localized pricing models.",
+      "language": "Java",
+      "framework": "Spring Boot",
+      "api_gateway": false
+    },
+    {
+      "name": "Order Lifecycle Service",
+      "responsibility": "Orchestrates order creation, state machine transitions (Pending, Accepted, Preparing, Dispatched, Delivered), and cart validation.",
+      "language": "Java",
+      "framework": "Spring Boot",
+      "api_gateway": false
+    },
+    {
+      "name": "Delivery & Tracking Service",
+      "responsibility": "Handles real-time geospatial driver location tracking, order-driver dispatch matching algorithms, dynamic ETA calculation, and WebSocket connections.",
+      "language": "Go",
+      "framework": "Fiber",
+      "api_gateway": false
+    },
+    {
+      "name": "Payment & Ledger Service",
+      "responsibility": "Integrates payment gateways (Stripe, PayPal), manages customer refunds, processes driver payouts, and maintains double-entry transaction ledgers.",
+      "language": "Python",
+      "framework": "FastAPI",
+      "api_gateway": false
+    },
+    {
+      "name": "Notification & Messaging Service",
+      "responsibility": "Dispatches cross-channel push notifications (FCM, APNS), SMS alerts (Twilio), and email updates based on system event triggers.",
+      "language": "Node.js",
+      "framework": "Express",
+      "api_gateway": false
+    }
+  ],
+  "databases": [
+    {
+      "service": "API Gateway Service",
+      "database_type": "Redis",
+      "justification": "Used for ultra-fast rate-limiting bucket storage, token revocation lookup, and request routing cache."
+    },
+    {
+      "service": "Identity & Auth Service",
+      "database_type": "PostgreSQL",
+      "justification": "Provides strong ACID compliance and relational integrity for user credentials, roles, and profile information."
+    },
+    {
+      "service": "Restaurant & Menu Service",
+      "database_type": "MongoDB",
+      "justification": "Flexible document model simplifies handling complex nested menu structures, dynamic modifiers, and frequent menu updates."
+    },
+    {
+      "service": "Order Lifecycle Service",
+      "database_type": "PostgreSQL",
+      "justification": "Guarantees strict transactional consistency and isolation required for order state management, pricing records, and tax calculations."
+    },
+    {
+      "service": "Delivery & Tracking Service",
+      "database_type": "Redis + PostGIS (PostgreSQL)",
+      "justification": "Redis In-Memory Geo Spatials handle ephemeral sub-second driver location updates; PostGIS persists historical delivery routes and zone boundaries."
+    },
+    {
+      "service": "Payment & Ledger Service",
+      "database_type": "PostgreSQL",
+      "justification": "Ensures financial-grade transactional safety, row-level locking, and immutable audit trailing for payment records."
+    },
+    {
+      "service": "Notification & Messaging Service",
+      "database_type": "MongoDB",
+      "justification": "Stores un-structured notification templates, user communication preferences, and delivery log histories."
+    }
+  ],
+  "communication": [
+    {
+      "from_service": "API Gateway Service",
+      "to_service": "Order Lifecycle Service",
+      "pattern": "REST",
+      "broker": "N/A",
+      "justification": "Synchronous request/response required to instantly validate carts and return preliminary order IDs to clients."
+    },
+    {
+      "from_service": "Order Lifecycle Service",
+      "to_service": "Payment & Ledger Service",
+      "pattern": "REST",
+      "broker": "N/A",
+      "justification": "Synchronous payment authorization required before committing an order to the active lifecycle state."
+    },
+    {
+      "from_service": "Order Lifecycle Service",
+      "to_service": "Delivery & Tracking Service",
+      "pattern": "Event-Driven",
+      "broker": "Kafka",
+      "justification": "Asynchronously emits 'OrderReadyForPickup' events so dispatch systems can immediately begin driver matching without blocking order APIs."
+    },
+    {
+      "from_service": "Delivery & Tracking Service",
+      "to_service": "Notification & Messaging Service",
+      "pattern": "Event-Driven",
+      "broker": "Kafka",
+      "justification": "Decouples location update streaming from push notification dispatching during proximity alerts (e.g., driver arrived)."
+    },
+    {
+      "from_service": "Payment & Ledger Service",
+      "to_service": "Order Lifecycle Service",
+      "pattern": "Event-Driven",
+      "broker": "Kafka",
+      "justification": "Asynchronously publishes 'PaymentSettled' or 'PaymentFailed' events to trigger order confirmation or cancellation workflows."
+    }
+  ],
+  "apis": [
+    {
+      "service": "API Gateway Service",
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/v1/auth/login",
+          "description": "Proxies client authentication request to Identity Service and returns JWT."
+        },
+        {
+          "method": "GET",
+          "path": "/v1/restaurants/nearby",
+          "description": "Proxies geolocation query parameters to obtain nearby open restaurants."
+        }
+      ]
+    },
+    {
+      "service": "Order Lifecycle Service",
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/v1/orders",
+          "description": "Creates a new order draft, computes final taxes/fees, and reserves inventory."
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/orders/{orderId}",
+          "description": "Retrieves the detailed status and current timeline of a specific order."
+        },
+        {
+          "method": "PATCH",
+          "path": "/api/v1/orders/{orderId}/status",
+          "description": "Updates order state (e.g., accepted by restaurant, in kitchen)."
+        }
+      ]
+    },
+    {
+      "service": "Delivery & Tracking Service",
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/v1/drivers/location",
+          "description": "Ingests high-frequency coordinates from the driver mobile app."
+        },
+        {
+          "method": "GET",
+          "path": "/api/v1/deliveries/{orderId}/tracking",
+          "description": "Gets current driver location and real-time calculated ETA for customer apps."
+        }
+      ]
+    },
+    {
+      "service": "Payment & Ledger Service",
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/v1/payments/charge",
+          "description": "Processes payment auth via external processor."
+        },
+        {
+          "method": "POST",
+          "path": "/api/v1/payments/webhooks",
+          "description": "Receives asynchronous status callbacks from external payment gateways."
+        }
+      ]
+    }
+  ],
+  "technology_stack": {
+    "frontend": "React Native (iOS/Android Client & Driver Apps), React.js (Restaurant Partner Dashboard)",
+    "backend": "Go (Gin, Fiber), Java (Spring Boot), Node.js (NestJS), Python (FastAPI)",
+    "database": "PostgreSQL (with PostGIS extension), MongoDB Atlas, Redis Cluster",
+    "message_broker": "Apache Kafka (Confluent Cloud)",
+    "api_gateway": "Go-based Custom Gateway / Envoy Proxy",
+    "deployment": "AWS EKS (Kubernetes), Docker, Terraform, Helm, ArgoCD, Datadog"
+  },
+  "deployment_notes": [
+    "Deploy microservices as containerized deployments on AWS EKS across 3 Availability Zones for high availability.",
+    "Utilize Kubernetes Horizontal Pod Autoscaler (HPA) driven by custom Prometheus metrics (e.g., HTTP request rates and Kafka consumer group lag).",
+    "Implement Istio Service Mesh for mutual TLS (mTLS) security between internal microservices and fine-grained traffic management.",
+    "Use Redis Enterprise with multi-region replication for ultra-low latency driver location caching and token management.",
+    "Establish CI/CD pipelines via GitHub Actions and ArgoCD for GitOps-driven deployment to staging and production clusters."
+  ],
+  "architecture_score": {
+    "scalability": 9,
+    "security": 9,
+    "maintainability": 8,
+    "cost_efficiency": 7
+  },
+  "ai_review": {
+    "overall_score": 8.5,
+    "strengths": [
+      "Excellent use of Polyglot Persistence selecting PostGIS for spatial tracking, MongoDB for dynamic menus, and PostgreSQL for financial/order ACID isolation.",
+      "Event-driven architecture using Kafka prevents system blocking during high concurrency peak order hours (e.g., lunch/dinner spikes).",
+      "Strong operational separation between real-time driver tracking and core order orchestration microservices."
+    ],
+    "weaknesses": [
+      "Multiple programming languages (Go, Java, Node.js, Python) increase operational overhead, developer context switching, and CI/CD complexity for an early-stage team.",
+      "High reliance on Managed Kafka and multi-node Kubernetes clusters increases baseline monthly infrastructure spend."
+    ],
+    "recommendations": [
+      "Standardize backend languages to max two (e.g., Go for high-throughput performance services like Delivery/Gateway, Node.js/TypeScript for business logic services like Auth/Orders) during MVP phase.",
+      "Implement a Circuit Breaker pattern (e.g., using Resilience4j or Istio) on the Payment service link to gracefully handle gateway degradation.",
+      "Introduce a dead-letter queue (DLQ) pattern on Kafka streams for failed notification and payout executions to ensure zero data loss."
+    ]
+  }
+}
